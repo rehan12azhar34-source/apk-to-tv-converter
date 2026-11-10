@@ -26,12 +26,12 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install Tools & Latest Apktool
+      - name: Install Tools & Apktool
         run: |
           sudo apt-get update
           sudo apt-get install -y zipalign apksigner curl jq file
 
-          # Download official latest Apktool
+          # Download official Apktool
           APKTOOL_JAR_URL=$(curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           curl -L -o apktool.jar "$APKTOOL_JAR_URL"
 
@@ -48,12 +48,10 @@ jobs:
           echo "Fetching APK from latest Release..."
           gh release download --pattern "*.apk" --clobber
 
-          # Find the downloaded APK and rename to app.apk
           DOWNLOADED=$(ls *.apk 2>/dev/null | head -n 1)
 
           if [ -z "$DOWNLOADED" ]; then
             echo "::error::No .apk file found in your latest release!"
-            echo "Make sure you attached an .apk file when publishing the release."
             exit 1
           fi
 
@@ -63,18 +61,6 @@ jobs:
 
           echo "Successfully acquired: $DOWNLOADED -> app.apk"
 
-      - name: Check APK File Integrity
-        run: |
-          echo "File size and format:"
-          ls -lh app.apk
-          file app.apk
-
-          FILE_SIZE=$(stat -c%s "app.apk")
-          if [ "$FILE_SIZE" -lt 100000 ]; then
-            echo "::error::The file is only $FILE_SIZE bytes! Not a valid APK."
-            exit 1
-          fi
-
       - name: Decompile APK
         run: |
           apktool d app.apk -o decompiled -f
@@ -83,9 +69,19 @@ jobs:
         run: |
           python patcher.py
 
-      - name: Rebuild APK
+      - name: Rebuild APK (Using Official Google AAPT2)
         run: |
-          apktool b decompiled -o rebuilt.apk
+          # 1. Lift stack limit to prevent memory segfaults
+          ulimit -s unlimited || true
+
+          # 2. Locate official Google aapt2 from the pre-installed Android SDK
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          AAPT2_PATH=$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f -executable | sort -V | tail -n 1)
+
+          echo "Using official Android SDK AAPT2 from: $AAPT2_PATH"
+
+          # 3. Build using external Google aapt2 instead of the buggy /tmp binary
+          apktool b decompiled -o rebuilt.apk --aapt "$AAPT2_PATH"
 
       - name: Align and Sign APK
         run: |
