@@ -8,8 +8,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Enabled lfs: true to pull real APK files if using Git LFS
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -22,38 +25,43 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install Tools & Latest Apktool from GitHub
+      - name: Install Tools & Latest Apktool
         run: |
           sudo apt-get update
-          sudo apt-get install -y zipalign apksigner curl jq
+          sudo apt-get install -y zipalign apksigner curl jq file
 
-          # 1. Fetch latest official Apktool release directly from GitHub Releases
           APKTOOL_JAR_URL=$(curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
-          echo "Downloading Apktool from: $APKTOOL_JAR_URL"
           curl -L -o apktool.jar "$APKTOOL_JAR_URL"
 
-          # 2. Download the official Linux wrapper script
           curl -L -o apktool https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
           chmod +x apktool
 
-          # 3. Move both to binary PATH
           sudo mv apktool /usr/local/bin/
           sudo mv apktool.jar /usr/local/bin/
 
-          # 4. Verify Apktool is working
-          apktool --version
-
-      - name: Verify APK Exists
+      # 2. Check file type and size to catch fake/corrupted APKs early
+      - name: Verify APK Integrity
         run: |
           if [ ! -f "app.apk" ]; then
-            echo "ERROR: 'app.apk' was not found in the root of your repository."
-            echo "Please upload your APK and ensure it is named exactly 'app.apk'"
+            echo "::error::'app.apk' not found in repo root!"
+            exit 1
+          fi
+
+          echo "Checking file details:"
+          ls -lh app.apk
+          file app.apk
+
+          # If the file is smaller than 100KB, it's likely a text pointer or empty
+          FILE_SIZE=$(stat -c%s "app.apk")
+          if [ "$FILE_SIZE" -lt 100000 ]; then
+            echo "::error::The file 'app.apk' is only $FILE_SIZE bytes! It is not a real APK."
+            echo "Contents of the file:"
+            cat app.apk
             exit 1
           fi
 
       - name: Decompile APK
         run: |
-          # Decompile with Apktool (--no-crunch avoids AAPT image errors)
           apktool d app.apk -o decompiled -f
 
       - name: Patch APK for Android TV (Landscape)
@@ -62,7 +70,7 @@ jobs:
 
       - name: Rebuild APK
         run: |
-          apktool b decompiled -o rebuilt.apk --use-aapt2
+          apktool b decompiled -o rebuilt.apk
 
       - name: Align and Sign APK
         run: |
