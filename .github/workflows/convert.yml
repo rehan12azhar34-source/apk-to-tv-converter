@@ -2,13 +2,19 @@ name: Convert Mobile APK to TV APK
 
 on:
   workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'Direct download URL to APK (Leave blank to use app.apk from repo)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   convert:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Enabled lfs: true to pull real APK files if using Git LFS
+      # Pulls files from repo (and downloads real binary if using Git LFS)
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
@@ -30,6 +36,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zipalign apksigner curl jq file
 
+          # Download latest official Apktool release
           APKTOOL_JAR_URL=$(curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           curl -L -o apktool.jar "$APKTOOL_JAR_URL"
 
@@ -38,25 +45,46 @@ jobs:
 
           sudo mv apktool /usr/local/bin/
           sudo mv apktool.jar /usr/local/bin/
+          apktool --version
 
-      # 2. Check file type and size to catch fake/corrupted APKs early
-      - name: Verify APK Integrity
+      - name: Acquire APK (URL or Repo file)
         run: |
-          if [ ! -f "app.apk" ]; then
-            echo "::error::'app.apk' not found in repo root!"
-            exit 1
+          URL="${{ github.event.inputs.apk_url }}"
+
+          if [ -n "$URL" ]; then
+            echo "URL provided! Downloading APK from URL..."
+            curl -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" \
+              -o app.apk "$URL"
+          else
+            echo "No URL provided. Looking for 'app.apk' in repo root..."
+            if [ ! -f "app.apk" ]; then
+              echo "::error::No URL was entered AND 'app.apk' was not found in the repository root!"
+              echo "Please either paste a direct download URL OR upload 'app.apk' to the repo."
+              exit 1
+            fi
+            echo "Using existing 'app.apk' from repository."
           fi
 
-          echo "Checking file details:"
+      - name: Verify APK Integrity
+        run: |
+          echo "--- File Details ---"
           ls -lh app.apk
           file app.apk
 
-          # If the file is smaller than 100KB, it's likely a text pointer or empty
+          # 1. Check if file is too small (e.g., text pointer, 404 HTML, or 0 bytes)
           FILE_SIZE=$(stat -c%s "app.apk")
           if [ "$FILE_SIZE" -lt 100000 ]; then
-            echo "::error::The file 'app.apk' is only $FILE_SIZE bytes! It is not a real APK."
-            echo "Contents of the file:"
-            cat app.apk
+            echo "::error::The APK file is only $FILE_SIZE bytes! It is not a real APK archive."
+            echo "File contents preview:"
+            head -n 20 app.apk
+            exit 1
+          fi
+
+          # 2. Check if file is a valid zip archive
+          if ! file app.apk | grep -iqE "zip|android"; then
+            echo "::error::The file is not a valid APK/ZIP format. (Detected as: $(file app.apk))"
+            echo "If you used a URL, the site likely served an HTML error or Cloudflare bot page."
+            head -n 20 app.apk
             exit 1
           fi
 
