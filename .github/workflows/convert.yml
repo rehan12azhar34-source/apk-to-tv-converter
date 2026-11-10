@@ -60,15 +60,17 @@ jobs:
 
           echo "Successfully acquired: $DOWNLOADED -> app.apk"
 
+      # Decode ONLY the manifest and smali, leaving resources untouched
       - name: Decompile APK
         run: |
-          apktool d app.apk -o decompiled -f
+          apktool d app.apk -o decompiled -f --only-manifest
 
       - name: Patch APK for Android TV (Landscape)
         run: |
           python patcher.py
 
-      - name: Rebuild APK (Using Official Google AAPT2)
+      # Rebuild with --no-crunch and without recompiling resources
+      - name: Rebuild APK
         run: |
           ulimit -s unlimited || true
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
@@ -78,13 +80,10 @@ jobs:
             AAPT2_SRC=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
           fi
 
-          echo "Using AAPT2 from: $AAPT2_SRC"
-
           cp "$AAPT2_SRC" ./aapt2_runner
           chmod 755 ./aapt2_runner
-          ./aapt2_runner version
 
-          apktool b decompiled -o rebuilt.apk --aapt "$PWD/aapt2_runner"
+          apktool b decompiled -o rebuilt.apk --no-crunch --aapt "$PWD/aapt2_runner"
 
       - name: Align and Sign APK
         run: |
