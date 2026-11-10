@@ -1,0 +1,74 @@
+name: Convert Mobile APK to TV APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: 'Direct download URL to the mobile APK'
+        required: true
+        type: string
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Android Build Tools & Apktool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zipalign apksigner wget
+          # Download latest apktool wrapper and jar
+          wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
+          wget -q -O apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar
+          chmod +x apktool
+          sudo mv apktool /usr/local/bin/
+          sudo mv apktool.jar /usr/local/bin/
+
+      - name: Download Mobile APK
+        run: |
+          wget -O input.apk "${{ github.event.inputs.apk_url }}"
+
+      - name: Decompile APK
+        run: |
+          apktool d input.apk -o decompiled -f
+
+      - name: Patch APK for Android TV (Landscape)
+        run: |
+          python patcher.py
+
+      - name: Rebuild APK
+        run: |
+          apktool b decompiled -o rebuilt.apk
+
+      - name: Align and Sign APK
+        run: |
+          # 1. Zipalign
+          zipalign -p -f 4 rebuilt.apk aligned.apk
+
+          # 2. Generate temporary debug key
+          keytool -genkey -v -keystore debug.keystore -storepass android \
+            -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
+            -validity 10000 -dname "CN=AndroidDebug,O=Android,C=US"
+
+          # 3. Sign with apksigner
+          apksigner sign --ks debug.keystore --ks-pass pass:android --out output_tv.apk aligned.apk
+
+      - name: Upload Converted TV APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-TV-Landscape-APK
+          path: output_tv.apk
