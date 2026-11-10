@@ -60,7 +60,6 @@ jobs:
 
           echo "Successfully acquired: $DOWNLOADED -> app.apk"
 
-      # Decode ONLY the manifest and smali, leaving resources untouched
       - name: Decompile APK
         run: |
           apktool d app.apk -o decompiled -f --only-manifest
@@ -69,7 +68,6 @@ jobs:
         run: |
           python patcher.py
 
-      # Rebuild with --no-crunch and without recompiling resources
       - name: Rebuild APK
         run: |
           ulimit -s unlimited || true
@@ -93,10 +91,24 @@ jobs:
             -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
             -validity 10000 -dname "CN=AndroidDebug,O=Android,C=US"
 
-          apksigner sign --ks debug.keystore --ks-pass pass:android --out output_tv.apk aligned.apk
+          apksigner sign --ks debug.keystore --ks-pass pass:android \
+            --min-sdk-version 21 \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --out output_tv.apk aligned.apk
 
-      - name: Upload Converted TV APK
+      - name: Upload Converted TV APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Android-TV-Landscape-APK
           path: output_tv.apk
+
+      # Upload directly to the GitHub Release
+      - name: Attach Converted APK to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(gh release view --json tagName -q .tagName)
+          echo "Uploading output_tv.apk to release: $TAG"
+          gh release upload "$TAG" output_tv.apk --clobber
+          echo "Upload complete! The TV APK is now attached to release $TAG."
