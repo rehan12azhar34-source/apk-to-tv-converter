@@ -22,27 +22,39 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install Android Build Tools & Apktool
+      - name: Install Tools & Latest Apktool from GitHub
         run: |
           sudo apt-get update
-          sudo apt-get install -y zipalign apksigner wget
-          wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
-          wget -q -O apktool.jar https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar
+          sudo apt-get install -y zipalign apksigner curl jq
+
+          # 1. Fetch latest official Apktool release directly from GitHub Releases
+          APKTOOL_JAR_URL=$(curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
+          echo "Downloading Apktool from: $APKTOOL_JAR_URL"
+          curl -L -o apktool.jar "$APKTOOL_JAR_URL"
+
+          # 2. Download the official Linux wrapper script
+          curl -L -o apktool https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool
           chmod +x apktool
+
+          # 3. Move both to binary PATH
           sudo mv apktool /usr/local/bin/
           sudo mv apktool.jar /usr/local/bin/
 
-      - name: Check APK File
+          # 4. Verify Apktool is working
+          apktool --version
+
+      - name: Verify APK Exists
         run: |
           if [ ! -f "app.apk" ]; then
-            echo "ERROR: 'app.apk' not found in the repository root!"
-            echo "Please upload your APK and make sure it is named 'app.apk'"
+            echo "ERROR: 'app.apk' was not found in the root of your repository."
+            echo "Please upload your APK and ensure it is named exactly 'app.apk'"
             exit 1
           fi
 
       - name: Decompile APK
         run: |
-          apktool d app.apk -o decompiled -f
+          # Decompile with Apktool (--no-crunch avoids AAPT image errors)
+          apktool d app.apk -o decompiled -f --no-crunch
 
       - name: Patch APK for Android TV (Landscape)
         run: |
@@ -50,14 +62,16 @@ jobs:
 
       - name: Rebuild APK
         run: |
-          apktool b decompiled -o rebuilt.apk
+          apktool b decompiled -o rebuilt.apk --use-aapt2
 
       - name: Align and Sign APK
         run: |
           zipalign -p -f 4 rebuilt.apk aligned.apk
+
           keytool -genkey -v -keystore debug.keystore -storepass android \
             -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 \
             -validity 10000 -dname "CN=AndroidDebug,O=Android,C=US"
+
           apksigner sign --ks debug.keystore --ks-pass pass:android --out output_tv.apk aligned.apk
 
       - name: Upload Converted TV APK
