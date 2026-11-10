@@ -31,7 +31,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y zipalign apksigner curl jq file
 
-          # Download official Apktool
           APKTOOL_JAR_URL=$(curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           curl -L -o apktool.jar "$APKTOOL_JAR_URL"
 
@@ -71,17 +70,21 @@ jobs:
 
       - name: Rebuild APK (Using Official Google AAPT2)
         run: |
-          # 1. Lift stack limit to prevent memory segfaults
           ulimit -s unlimited || true
-
-          # 2. Locate official Google aapt2 from the pre-installed Android SDK
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          AAPT2_PATH=$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f -executable | sort -V | tail -n 1)
 
-          echo "Using official Android SDK AAPT2 from: $AAPT2_PATH"
+          AAPT2_SRC=$(find "$ANDROID_HOME/build-tools" -name aapt2 | grep -E "34|35" | sort -V | tail -n 1)
+          if [ -z "$AAPT2_SRC" ]; then
+            AAPT2_SRC=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -n 1)
+          fi
 
-          # 3. Build using external Google aapt2 instead of the buggy /tmp binary
-          apktool b decompiled -o rebuilt.apk --aapt "$AAPT2_PATH"
+          echo "Using AAPT2 from: $AAPT2_SRC"
+
+          cp "$AAPT2_SRC" ./aapt2_runner
+          chmod 755 ./aapt2_runner
+          ./aapt2_runner version
+
+          apktool b decompiled -o rebuilt.apk --aapt "$PWD/aapt2_runner"
 
       - name: Align and Sign APK
         run: |
