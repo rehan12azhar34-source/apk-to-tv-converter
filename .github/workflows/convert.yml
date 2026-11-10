@@ -54,7 +54,7 @@ jobs:
       - name: Decompile APK
         run: |
           # Decompile with Apktool (--no-crunch avoids AAPT image errors)
-          apktool d app.apk -o decompiled -f --no-crunch
+          apktool d app.apk -o decompiled -f
 
       - name: Patch APK for Android TV (Landscape)
         run: |
