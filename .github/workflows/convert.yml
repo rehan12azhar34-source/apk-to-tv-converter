@@ -2,12 +2,8 @@ name: Convert Mobile APK to TV APK
 
 on:
   workflow_dispatch:
-    inputs:
-      apk_url:
-        description: 'Direct download URL (Leave blank to use APK from Releases)'
-        required: false
-        type: string
-        default: ''
+  release:
+    types: [published]
 
 jobs:
   convert:
@@ -30,11 +26,12 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install Tools & Apktool
+      - name: Install Tools & Latest Apktool
         run: |
           sudo apt-get update
           sudo apt-get install -y zipalign apksigner curl jq file
 
+          # Download official latest Apktool
           APKTOOL_JAR_URL=$(curl -s https://api.github.com/repos/iBotPeaches/Apktool/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url')
           curl -L -o apktool.jar "$APKTOOL_JAR_URL"
 
@@ -44,32 +41,37 @@ jobs:
           sudo mv apktool /usr/local/bin/
           sudo mv apktool.jar /usr/local/bin/
 
-      - name: Fetch APK (From URL or GitHub Release)
+      - name: Download APK from Latest GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          URL="${{ github.event.inputs.apk_url }}"
+          echo "Fetching APK from latest Release..."
+          gh release download --pattern "*.apk" --clobber
 
-          if [ -n "$URL" ]; then
-            echo "Downloading from URL..."
-            curl -L -A "Mozilla/5.0" -o app.apk "$URL"
-          else
-            echo "Downloading APK from latest GitHub Release..."
-            gh release download --pattern "*.apk" --clobber
-            # Rename whatever APK was downloaded to app.apk
-            mv *.apk app.apk
+          # Find the downloaded APK and rename to app.apk
+          DOWNLOADED=$(ls *.apk 2>/dev/null | head -n 1)
+
+          if [ -z "$DOWNLOADED" ]; then
+            echo "::error::No .apk file found in your latest release!"
+            echo "Make sure you attached an .apk file when publishing the release."
+            exit 1
           fi
 
-      - name: Check APK File
+          if [ "$DOWNLOADED" != "app.apk" ]; then
+            mv "$DOWNLOADED" app.apk
+          fi
+
+          echo "Successfully acquired: $DOWNLOADED -> app.apk"
+
+      - name: Check APK File Integrity
         run: |
-          echo "File size and type:"
+          echo "File size and format:"
           ls -lh app.apk
           file app.apk
 
           FILE_SIZE=$(stat -c%s "app.apk")
           if [ "$FILE_SIZE" -lt 100000 ]; then
-            echo "::error::File is too small ($FILE_SIZE bytes). It is not a real APK!"
-            head -n 20 app.apk
+            echo "::error::The file is only $FILE_SIZE bytes! Not a valid APK."
             exit 1
           fi
 
